@@ -1,13 +1,18 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
+using NLog;
 
 namespace Monitor
 {
-    /// <summary>Класс реализует метод работы с процессом</summary>
+    /// <summary>Класс реализует методы работы с процессом</summary>
     class MonitoringOfProcess
     {
-        protected Process[] procs;
+        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+        private Process[] procs;
+        private List<ProcessChecker> _processCheckers;
 
         /// <summary>Метод производит контроль над указанным процессом и "убивает" его при выполнении условия</summary>
         ///  <param name="name">Имя процесса</param>
@@ -16,23 +21,34 @@ namespace Monitor
         public void KillProcess(string name, int acceptableLifetime, int frequencyOfVerification)
         {
             procs = Process.GetProcessesByName(name);
-            int checking = frequencyOfVerification * 60000;
-            
-            foreach (Process proc in procs)
+            _processCheckers = new List<ProcessChecker>();
+            foreach (var proc in procs)
             {
-                while (proc.StartTime.AddMinutes(acceptableLifetime) > DateTime.Now)
-                {
-                    Thread.Sleep(checking);
-                }
-
-                int i = 0;
-                while (i != procs.Length)
-                {
-                    procs[i].Kill();
-                    i++;
-                }
-                Console.WriteLine("Готово");
+                var processInfo = new ProcessChecker(proc, acceptableLifetime, frequencyOfVerification);
+                if (!processInfo.ProcessIsKilled)
+                    _processCheckers.Add(processInfo);
             }
-        }  
+            var timerCb = new TimerCallback(CheckProcesses);
+            var timer = new Timer(timerCb, null, 0, frequencyOfVerification * 60000);
+        }
+
+        /// <summary>Метод производит проверку на наличие "не убитых" процессов</summary>
+        private void CheckProcesses(object parameter)
+        {
+            var notKilledProcesses = _processCheckers.Where(x => !x.ProcessIsKilled).ToList();
+            foreach (var processChecker in notKilledProcesses)
+            {
+                processChecker.Check();
+            }
+
+            notKilledProcesses = _processCheckers.Where(x => !x.ProcessIsKilled).ToList();
+            if (notKilledProcesses.Count == 0)
+            {
+                Logger.Info("Все найденные процессы завершены");
+                Environment.Exit(0);
+            }
+        }
     }
 }
+
+   
